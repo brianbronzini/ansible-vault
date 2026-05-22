@@ -4,7 +4,7 @@ Two-node HashiCorp Vault setup, fully automated with Ansible. Primary Vault hold
 
 Vault audit logs ship to a Wazuh SIEM, so every secret access is visible to the SOC stack.
 
-## A note from me
+## Project Purpose
 
 I built this for two reasons. First, my own infrastructure had accumulated secrets in plain `.env` and `config.ini` files scattered across half a dozen hosts. I wanted them in one place, with an audit trail, and managed the same way as everything else I run. Second, I wanted a hands-on project that exercised the patterns I read about for production secrets management: auto-unseal, least-privilege auth, audit forwarding to a SIEM, transport security via a real cert.
 

@@ -1,0 +1,25 @@
+ui = true
+disable_mlock = true
+
+storage "raft" {
+  path    = "{{ vault_data_dir }}"
+  node_id = "{{ inventory_hostname }}"
+}
+
+listener "tcp" {
+  address         = "{{ ansible_host }}:8200"
+  tls_disable     = true
+  cluster_address = "{{ ansible_host }}:8201"
+}
+
+seal "transit" {
+  address         = "{{ primary_seal_unsealer_addr }}"
+  token           = "{{ primary_transit_token }}"
+  disable_renewal = "false"
+  key_name        = "{{ primary_seal_key_name }}"
+  mount_path      = "{{ primary_seal_mount }}/"
+  tls_skip_verify = "true"
+}
+
+api_addr     = "{{ primary_api_addr }}"
+cluster_addr = "{{ primary_cluster_addr }}"

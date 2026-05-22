@@ -1,0 +1,40 @@
+<ossec_config>
+  <client>
+    <server>
+      <address>{{ wazuh_manager_address }}</address>
+      <port>{{ wazuh_manager_port }}</port>
+      <protocol>tcp</protocol>
+    </server>
+    <config-profile>{{ ansible_distribution | lower }}, {{ ansible_distribution | lower }}{{ ansible_distribution_major_version }}</config-profile>
+    <notify_time>10</notify_time>
+    <time-reconnect>60</time-reconnect>
+    <auto_restart>yes</auto_restart>
+    <crypto_method>aes</crypto_method>
+  </client>
+
+  <client_buffer>
+    <disabled>no</disabled>
+    <queue_size>5000</queue_size>
+    <events_per_second>500</events_per_second>
+  </client_buffer>
+
+  <logging>
+    <log_format>plain</log_format>
+  </logging>
+
+  <localfile>
+    <log_format>json</log_format>
+    <location>{{ wazuh_vault_audit_log }}</location>
+    <label key="source">vault-audit</label>
+  </localfile>
+
+  <localfile>
+    <log_format>syslog</log_format>
+    <location>/var/log/auth.log</location>
+  </localfile>
+
+  <localfile>
+    <log_format>syslog</log_format>
+    <location>/var/log/syslog</location>
+  </localfile>
+</ossec_config>

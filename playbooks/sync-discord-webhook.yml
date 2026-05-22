@@ -1,0 +1,63 @@
+---
+# Pull the Discord webhook from Vault and apply it to Jellyseerr's settings.
+# Restarts the container only if the value actually changed.
+#
+# This is the proof point that secrets live in Vault now. The Ansible
+# controller never sees the webhook URL on disk in cleartext outside of the
+# moment it is in memory during this run. The same pattern works for any API
+# key, DB password, or webhook used by playbooks in this controller.
+
+- name: Read Discord webhook from Vault
+  hosts: localhost
+  gather_facts: false
+  vars:
+    vault_addr: "http://192.168.12.205:8200"
+    approle_role_id_file: "{{ lookup('env', 'HOME') }}/.vault-creds/role_id"
+    approle_secret_id_file: "{{ lookup('env', 'HOME') }}/.vault-creds/secret_id"
+
+  tasks:
+    - name: Authenticate to Vault via AppRole
+      community.hashi_vault.vault_login:
+        url: "{{ vault_addr }}"
+        auth_method: approle
+        role_id: "{{ lookup('file', approle_role_id_file) | trim }}"
+        secret_id: "{{ lookup('file', approle_secret_id_file) | trim }}"
+      register: vault_login
+      no_log: true
+
+    - name: Read kv/ansible/jellyseerr
+      community.hashi_vault.vault_kv2_get:
+        url: "{{ vault_addr }}"
+        token: "{{ vault_login.login.auth.client_token }}"
+        engine_mount_point: kv
+        path: ansible/jellyseerr
+      register: vault_jellyseerr
+      no_log: true
+
+    - name: Stash the webhook for the downstream play
+      ansible.builtin.set_fact:
+        discord_webhook: "{{ vault_jellyseerr.secret.discord_webhook }}"
+      no_log: true
+
+- name: Apply Discord webhook to Jellyseerr settings on homeserver
+  hosts: homeserver
+  gather_facts: false
+  vars:
+    seerr_settings_path: /root/vpn-stack/seerr-config/settings.json
+    seerr_container: jellyseerr
+
+  tasks:
+    - name: Set the Discord webhook URL in Jellyseerr settings
+      ansible.builtin.lineinfile:
+        path: "{{ seerr_settings_path }}"
+        regexp: '^(\s*)"webhookUrl":\s*"https://discord(app)?\.com/api/webhooks/[^"]*",'
+        line: '          "webhookUrl": "{{ hostvars[''localhost''].discord_webhook }}",'
+        state: present
+      register: seerr_config_update
+      no_log: true
+
+    - name: Restart Jellyseerr if the webhook changed
+      community.docker.docker_container:
+        name: "{{ seerr_container }}"
+        restart: true
+      when: seerr_config_update.changed

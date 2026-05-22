@@ -1,0 +1,7 @@
+path "{{ unsealer_transit_mount }}/encrypt/{{ unsealer_transit_key_name }}" {
+  capabilities = ["update"]
+}
+
+path "{{ unsealer_transit_mount }}/decrypt/{{ unsealer_transit_key_name }}" {
+  capabilities = ["update"]
+}

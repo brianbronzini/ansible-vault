@@ -1,0 +1,9 @@
+---
+# Network ranges and the SSH key path below are specific to the environment this
+# repo runs against. Change lan_cidr, tailscale_cgnat_cidr, and the key path to
+# match your environment if you fork the repo.
+lan_cidr: "192.168.12.0/24"
+tailscale_cgnat_cidr: "100.64.0.0/10"
+
+ansible_admin_user: ansible
+ansible_admin_authorized_key: "{{ lookup('file', '/home/dev/.ssh/monitoring_ed25519.pub') }}"

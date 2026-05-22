@@ -1,0 +1,27 @@
+---
+approle_name: ansible-controller
+approle_policy_name: ansible-controller
+approle_kv_prefix: ansible
+
+# Where the role_id and secret_id land on the controller running ansible-playbook.
+# Both files are mode 0600, owned by the user running the playbook, outside the
+# git repo. Override approle_credentials_dir if your controller stores them
+# somewhere other than the default below.
+approle_credentials_dir: "{{ lookup('env', 'HOME') }}/.vault-creds"
+approle_role_id_file: "{{ approle_credentials_dir }}/role_id"
+approle_secret_id_file: "{{ approle_credentials_dir }}/secret_id"
+
+# Owner and group on the controller for the credential files. Defaults to the
+# user running ansible-playbook.
+approle_local_owner: "{{ lookup('env', 'USER') }}"
+approle_local_group: "{{ lookup('env', 'USER') }}"
+
+# Periodic + bound TTLs. AppRole-issued tokens renew, never expire if used.
+approle_token_period: "24h"
+approle_token_policies:
+  - "{{ approle_policy_name }}"
+
+# Restrict logins to the controller's IPs (LAN + Tailscale).
+approle_bound_cidrs:
+  - "192.168.12.202/32"
+  - "100.64.0.0/10"

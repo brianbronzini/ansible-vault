@@ -1,0 +1,125 @@
+---
+- name: Look up primary root token (operator-only file)
+  ansible.builtin.slurp:
+    src: "{{ primary_init_secrets_file }}"
+  register: approle_primary_init_b64
+
+- name: Set Vault env for approle bootstrap
+  ansible.builtin.set_fact:
+    vault_env:
+      VAULT_ADDR: "{{ primary_api_addr }}"
+      VAULT_TOKEN: "{{ (approle_primary_init_b64.content | b64decode | from_json).root_token }}"
+  no_log: true
+
+- name: List enabled auth methods
+  ansible.builtin.shell:
+    cmd: "vault auth list -format=json"
+  environment: "{{ vault_env }}"
+  changed_when: false
+  register: approle_auth_raw
+
+- name: Enable approle auth method if missing
+  when: "'approle/' not in (approle_auth_raw.stdout | from_json | dict2items | map(attribute='key') | list)"
+  ansible.builtin.shell:
+    cmd: "vault auth enable approle"
+  environment: "{{ vault_env }}"
+
+- name: Render ansible-controller policy file
+  ansible.builtin.template:
+    src: ansible-controller-policy.hcl.j2
+    dest: "{{ vault_config_dir }}/{{ approle_policy_name }}-policy.hcl"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: "0640"
+
+# Reconcile the policy against what is actually in Vault, not against the
+# local file's mtime. If Vault was rebuilt or the policy was deleted
+# out-of-band, the file alone is not enough to know whether we need to write.
+- name: Read the policy currently stored in Vault
+  ansible.builtin.shell:
+    cmd: "vault policy read {{ approle_policy_name }} 2>/dev/null || true"
+  environment: "{{ vault_env }}"
+  changed_when: false
+  register: approle_policy_in_vault
+
+- name: Read the rendered policy file from disk
+  ansible.builtin.slurp:
+    src: "{{ vault_config_dir }}/{{ approle_policy_name }}-policy.hcl"
+  register: approle_policy_on_disk
+
+- name: Install ansible-controller policy in Vault if missing or out of sync
+  when: (approle_policy_on_disk.content | b64decode | trim) != (approle_policy_in_vault.stdout | trim)
+  ansible.builtin.shell:
+    cmd: "vault policy write {{ approle_policy_name }} {{ vault_config_dir }}/{{ approle_policy_name }}-policy.hcl"
+  environment: "{{ vault_env }}"
+
+- name: Check whether approle role exists
+  ansible.builtin.shell:
+    cmd: "vault read -format=json auth/approle/role/{{ approle_name }} 2>/dev/null || true"
+  environment: "{{ vault_env }}"
+  changed_when: false
+  register: approle_role_check
+
+- name: Create or update the approle
+  ansible.builtin.shell:
+    cmd: >-
+      vault write auth/approle/role/{{ approle_name }}
+      token_period={{ approle_token_period }}
+      token_policies={{ approle_token_policies | join(',') }}
+      bind_secret_id=true
+      secret_id_bound_cidrs={{ approle_bound_cidrs | join(',') }}
+      token_bound_cidrs={{ approle_bound_cidrs | join(',') }}
+  environment: "{{ vault_env }}"
+  when: approle_role_check.stdout | length == 0
+
+- name: Fetch role_id
+  ansible.builtin.shell:
+    cmd: "vault read -field=role_id auth/approle/role/{{ approle_name }}/role-id"
+  environment: "{{ vault_env }}"
+  changed_when: false
+  register: approle_role_id_raw
+  no_log: true
+
+- name: Check whether controller already has a stored secret_id
+  ansible.builtin.stat:
+    path: "{{ approle_secret_id_file }}"
+  delegate_to: localhost
+  register: approle_secret_id_stat
+
+- name: Issue a fresh secret_id when controller has none
+  when: not approle_secret_id_stat.stat.exists
+  ansible.builtin.shell:
+    cmd: "vault write -force -format=json auth/approle/role/{{ approle_name }}/secret-id"
+  environment: "{{ vault_env }}"
+  register: approle_secret_id_raw
+  no_log: true
+
+- name: Ensure controller credentials dir exists
+  ansible.builtin.file:
+    path: "{{ approle_credentials_dir }}"
+    state: directory
+    owner: "{{ approle_local_owner }}"
+    group: "{{ approle_local_group }}"
+    mode: "0700"
+  delegate_to: localhost
+
+- name: Write role_id to controller
+  ansible.builtin.copy:
+    content: "{{ approle_role_id_raw.stdout }}\n"
+    dest: "{{ approle_role_id_file }}"
+    owner: "{{ approle_local_owner }}"
+    group: "{{ approle_local_group }}"
+    mode: "0600"
+  delegate_to: localhost
+  no_log: true
+
+- name: Write secret_id to controller
+  when: not approle_secret_id_stat.stat.exists
+  ansible.builtin.copy:
+    content: "{{ (approle_secret_id_raw.stdout | from_json).data.secret_id }}\n"
+    dest: "{{ approle_secret_id_file }}"
+    owner: "{{ approle_local_owner }}"
+    group: "{{ approle_local_group }}"
+    mode: "0600"
+  delegate_to: localhost
+  no_log: true

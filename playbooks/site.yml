@@ -1,0 +1,42 @@
+---
+- name: Baseline hardening for Vault LXCs
+  hosts: vault_hosts
+  gather_facts: true
+  roles:
+    - baseline_hardening
+
+- name: Install Vault on all Vault LXCs
+  hosts: vault_hosts
+  gather_facts: true
+  roles:
+    - vault_install
+
+- name: Bring up the unsealer Vault
+  hosts: vault-unsealer
+  gather_facts: false
+  roles:
+    - vault_unsealer
+
+- name: Bring up the primary Vault with Transit auto-unseal
+  hosts: vault-primary
+  gather_facts: false
+  roles:
+    - vault_primary
+
+- name: Enroll Wazuh agents on Vault LXCs
+  hosts: vault_hosts
+  gather_facts: true
+  roles:
+    - wazuh_agent
+
+- name: Configure AppRole auth for the Ansible controller
+  hosts: vault-primary
+  gather_facts: false
+  roles:
+    - vault_approle_ansible
+
+- name: Front the primary API with a tailnet HTTPS cert
+  hosts: vault-primary
+  gather_facts: true
+  roles:
+    - vault_tailscale_serve

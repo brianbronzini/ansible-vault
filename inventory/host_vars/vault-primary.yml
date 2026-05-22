@@ -1,0 +1,9 @@
+---
+# Primary-specific values that need to be visible across roles
+# (vault_primary, vault_approle_ansible, etc.). Role defaults aren't
+# shared across roles, so we hoist them here.
+
+primary_api_addr: "http://{{ ansible_host }}:8200"
+primary_cluster_addr: "http://{{ ansible_host }}:8201"
+primary_init_secrets_file: /root/vault-primary-init.json
+primary_kv_mount: kv

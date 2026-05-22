@@ -1,0 +1,13 @@
+---
+# Ports the baseline role opens on every Vault LXC.
+baseline_allowed_ports:
+  - { port: 22, proto: tcp, from: "{{ lan_cidr }}", comment: "SSH from LAN" }
+  - { port: 22, proto: tcp, from: "{{ tailscale_cgnat_cidr }}", comment: "SSH from Tailscale" }
+  - { port: 9100, proto: tcp, from: "{{ lan_cidr }}", comment: "node_exporter from LAN" }
+
+# Shared paths/users for both vault_install and the per-host roles below it.
+vault_user: vault
+vault_group: vault
+vault_config_dir: /etc/vault.d
+vault_data_dir: /opt/vault/data
+vault_log_dir: /var/log/vault

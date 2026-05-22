@@ -1,0 +1,15 @@
+---
+baseline_locale: en_US.UTF-8
+
+baseline_packages:
+  - sudo
+  - ufw
+  - locales
+  - unattended-upgrades
+  - prometheus-node-exporter
+  - python3-debian
+  - ca-certificates
+  - curl
+  - gnupg
+
+baseline_allowed_ports: []

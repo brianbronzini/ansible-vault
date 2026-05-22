@@ -1,0 +1,7 @@
+path "kv/data/{{ approle_kv_prefix }}/*" {
+  capabilities = ["read"]
+}
+
+path "kv/metadata/{{ approle_kv_prefix }}/*" {
+  capabilities = ["read", "list"]
+}

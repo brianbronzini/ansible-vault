@@ -1,0 +1,37 @@
+# Ansible
+*.retry
+.vault_pass
+*.vault_pass
+
+# Secrets that must never be committed
+secrets/
+.local/
+*.key
+*.pem
+*-token
+*-token-*
+unseal-keys*
+root-token*
+
+# Python virtualenvs
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Internal-only operator docs. Architecture, decisions, runbook, status notes
+# live on disk for personal reference but are not part of the public repo.
+docs/
+
+# Safety backup of pre-cleanup git history (untracked).
+.git.bak/

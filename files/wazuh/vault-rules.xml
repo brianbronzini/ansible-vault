@@ -1,0 +1,91 @@
+<!--
+  Custom Wazuh rules for HashiCorp Vault audit events.
+  Rule IDs 100200-100209 reserved for Vault on this manager.
+  The Wazuh JSON decoder parses the audit log automatically, so these rules
+  reference Vault audit fields by their JSON path (request.path, auth.display_name).
+-->
+
+<group name="local,vault,hashicorp_vault,">
+
+  <!-- Base rule: anything tagged source=vault-audit. Used as parent. -->
+  <rule id="100200" level="0">
+    <decoded_as>json</decoded_as>
+    <field name="source">vault-audit</field>
+    <description>HashiCorp Vault audit event</description>
+  </rule>
+
+  <!-- Root token used to write or modify anything.
+       Day-to-day Vault traffic should come from approle/userpass tokens.
+       A write executed by display_name=root indicates either a human operator
+       or a misconfigured integration that should be moved to approle. -->
+  <rule id="100201" level="10">
+    <if_sid>100200</if_sid>
+    <field name="auth.display_name">^root$</field>
+    <field name="request.operation" type="pcre2">^(create|update|delete)$</field>
+    <description>Vault root token performed $(request.operation) on $(request.path)</description>
+    <mitre>
+      <id>T1078.001</id>
+    </mitre>
+  </rule>
+
+  <!-- Policy create/update/delete. Policies define what tokens can do.
+       Changes here are a privileged config change and should be reviewed. -->
+  <rule id="100202" level="9">
+    <if_sid>100200</if_sid>
+    <field name="request.path" type="pcre2">^sys/policy(ies)?/.+</field>
+    <field name="request.operation" type="pcre2">^(create|update|delete)$</field>
+    <description>Vault policy $(request.operation) on $(request.path)</description>
+    <mitre>
+      <id>T1098</id>
+    </mitre>
+  </rule>
+
+  <!-- Auth method enabled, disabled, or tuned.
+       Adding a new auth method (e.g. userpass with weak creds) is a
+       persistence opportunity. -->
+  <rule id="100203" level="9">
+    <if_sid>100200</if_sid>
+    <field name="request.path" type="pcre2">^sys/auth/.+</field>
+    <field name="request.operation" type="pcre2">^(create|update|delete)$</field>
+    <description>Vault auth method change: $(request.operation) on $(request.path)</description>
+    <mitre>
+      <id>T1556</id>
+    </mitre>
+  </rule>
+
+  <!-- Vault has been sealed (manual or due to error).
+       In production this means the API is offline until an operator unseals. -->
+  <rule id="100204" level="12">
+    <if_sid>100200</if_sid>
+    <field name="request.path">^sys/seal$</field>
+    <description>Vault was sealed via $(request.remote_address)</description>
+  </rule>
+
+  <!-- Authentication failure or any Vault API error response.
+       Stack of these may indicate token guessing or a broken integration. -->
+  <rule id="100205" level="7">
+    <if_sid>100200</if_sid>
+    <field name="response.mount_type" negate="yes">.</field>
+    <field name="type">^response$</field>
+    <field name="error" type="pcre2">.</field>
+    <description>Vault API error on $(request.path): $(error)</description>
+  </rule>
+
+  <!-- KV secret read. Low severity by itself; meant as a visibility hook
+       so the SOC can timeline who read what. Suppress noise with --log-level. -->
+  <rule id="100206" level="3">
+    <if_sid>100200</if_sid>
+    <field name="request.path" type="pcre2">^kv/data/.+</field>
+    <field name="request.operation">^read$</field>
+    <description>Vault KV read: $(request.path) by $(auth.display_name)</description>
+  </rule>
+
+  <!-- Token created. Useful for tracking which approles are issuing tokens. -->
+  <rule id="100207" level="5">
+    <if_sid>100200</if_sid>
+    <field name="request.path">^auth/token/create</field>
+    <field name="request.operation">^update$</field>
+    <description>Vault token created via $(request.path)</description>
+  </rule>
+
+</group>

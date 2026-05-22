@@ -1,0 +1,16 @@
+ui = true
+disable_mlock = true
+
+storage "raft" {
+  path    = "{{ vault_data_dir }}"
+  node_id = "{{ inventory_hostname }}"
+}
+
+listener "tcp" {
+  address         = "{{ ansible_host }}:8200"
+  tls_disable     = true
+  cluster_address = "{{ ansible_host }}:8201"
+}
+
+api_addr     = "{{ unsealer_api_addr }}"
+cluster_addr = "{{ unsealer_cluster_addr }}"

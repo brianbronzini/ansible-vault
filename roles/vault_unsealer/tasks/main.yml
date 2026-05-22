@@ -1,0 +1,190 @@
+---
+- name: Render unsealer vault.hcl
+  ansible.builtin.template:
+    src: vault.hcl.j2
+    dest: "{{ vault_config_dir }}/vault.hcl"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: "0640"
+  notify: Restart vault
+
+- name: Ensure vault service is enabled and started
+  ansible.builtin.systemd:
+    name: vault
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Flush handlers so config changes take effect before bootstrap
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Vault API to listen on 8200
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host }}"
+    port: 8200
+    delay: 1
+    timeout: 30
+
+- name: Read current Vault status JSON
+  ansible.builtin.shell:
+    cmd: "vault status -format=json -address={{ unsealer_api_addr }} || true"
+  changed_when: false
+  register: unsealer_status_raw
+
+- name: Parse Vault status JSON
+  ansible.builtin.set_fact:
+    unsealer_status: "{{ unsealer_status_raw.stdout | from_json }}"
+
+- name: Initialize unsealer Vault if needed
+  when: not unsealer_status.initialized
+  block:
+    - name: Run vault operator init
+      ansible.builtin.shell:
+        cmd: >-
+          vault operator init -format=json
+          -key-shares={{ unsealer_key_shares }}
+          -key-threshold={{ unsealer_key_threshold }}
+          -address={{ unsealer_api_addr }}
+      register: unsealer_init_raw
+      no_log: true
+
+    - name: Persist unsealer init output (root-only)
+      ansible.builtin.copy:
+        content: "{{ unsealer_init_raw.stdout }}"
+        dest: "{{ unsealer_init_secrets_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Refresh status after init
+      ansible.builtin.shell:
+        cmd: "vault status -format=json -address={{ unsealer_api_addr }} || true"
+      changed_when: false
+      register: unsealer_status_raw
+
+    - name: Reparse status JSON
+      ansible.builtin.set_fact:
+        unsealer_status: "{{ unsealer_status_raw.stdout | from_json }}"
+
+- name: Load saved init secrets
+  ansible.builtin.slurp:
+    src: "{{ unsealer_init_secrets_file }}"
+  register: unsealer_init_b64
+  no_log: true
+
+- name: Decode init secrets
+  ansible.builtin.set_fact:
+    unsealer_init: "{{ unsealer_init_b64.content | b64decode | from_json }}"
+  no_log: true
+
+- name: Unseal Vault if sealed
+  when: unsealer_status.sealed
+  ansible.builtin.shell:
+    cmd: "vault operator unseal -address={{ unsealer_api_addr }} {{ item }}"
+  loop: "{{ unsealer_init.unseal_keys_b64 }}"
+  no_log: true
+  changed_when: true
+
+- name: Login as root token for bootstrap operations
+  ansible.builtin.set_fact:
+    vault_env:
+      VAULT_ADDR: "{{ unsealer_api_addr }}"
+      VAULT_TOKEN: "{{ unsealer_init.root_token }}"
+  no_log: true
+
+- name: List enabled secrets engines
+  ansible.builtin.shell:
+    cmd: "vault secrets list -format=json"
+  environment: "{{ vault_env }}"
+  changed_when: false
+  register: unsealer_secrets_raw
+
+- name: Enable Transit secrets engine if needed
+  when: (unsealer_transit_mount + '/') not in (unsealer_secrets_raw.stdout | from_json | dict2items | map(attribute='key') | list)
+  ansible.builtin.shell:
+    cmd: "vault secrets enable -path={{ unsealer_transit_mount }} transit"
+  environment: "{{ vault_env }}"
+
+- name: Check whether autounseal key exists
+  ansible.builtin.shell:
+    cmd: "vault read -format=json {{ unsealer_transit_mount }}/keys/{{ unsealer_transit_key_name }} 2>/dev/null || true"
+  environment: "{{ vault_env }}"
+  changed_when: false
+  register: unsealer_key_check
+
+- name: Create autounseal Transit key if missing
+  when: unsealer_key_check.stdout | length == 0
+  ansible.builtin.shell:
+    cmd: "vault write -f {{ unsealer_transit_mount }}/keys/{{ unsealer_transit_key_name }}"
+  environment: "{{ vault_env }}"
+
+- name: Render autounseal policy file
+  ansible.builtin.template:
+    src: autounseal-policy.hcl.j2
+    dest: /etc/vault.d/autounseal-policy.hcl
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: "0640"
+
+# Reconcile against Vault, not the file's mtime. Same reasoning as the
+# ansible-controller policy in vault_approle_ansible.
+- name: Read the autounseal policy currently stored in Vault
+  ansible.builtin.shell:
+    cmd: "vault policy read {{ unsealer_autounseal_policy }} 2>/dev/null || true"
+  environment: "{{ vault_env }}"
+  changed_when: false
+  register: autounseal_policy_in_vault
+
+- name: Read the rendered autounseal policy file from disk
+  ansible.builtin.slurp:
+    src: /etc/vault.d/autounseal-policy.hcl
+  register: autounseal_policy_on_disk
+
+- name: Install autounseal policy in Vault if missing or out of sync
+  when: (autounseal_policy_on_disk.content | b64decode | trim) != (autounseal_policy_in_vault.stdout | trim)
+  ansible.builtin.shell:
+    cmd: "vault policy write {{ unsealer_autounseal_policy }} /etc/vault.d/autounseal-policy.hcl"
+  environment: "{{ vault_env }}"
+
+- name: Check if autounseal token file already exists
+  ansible.builtin.stat:
+    path: "{{ unsealer_transit_token_file }}"
+  register: unsealer_token_stat
+
+- name: Issue periodic token for the autounseal policy
+  when: not unsealer_token_stat.stat.exists
+  ansible.builtin.shell:
+    cmd: >-
+      vault token create
+      -policy={{ unsealer_autounseal_policy }}
+      -period=24h
+      -orphan
+      -display-name=autounseal-primary
+      -format=json
+  environment: "{{ vault_env }}"
+  register: unsealer_token_create_raw
+  no_log: true
+
+- name: Persist autounseal token to root-only file
+  when: not unsealer_token_stat.stat.exists
+  ansible.builtin.copy:
+    content: "{{ (unsealer_token_create_raw.stdout | from_json).auth.client_token }}"
+    dest: "{{ unsealer_transit_token_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: List enabled audit devices
+  ansible.builtin.shell:
+    cmd: "vault audit list -format=json"
+  environment: "{{ vault_env }}"
+  changed_when: false
+  register: unsealer_audits_raw
+
+- name: Enable file audit device if not already enabled
+  when: "'file/' not in (unsealer_audits_raw.stdout | from_json | dict2items | map(attribute='key') | list)"
+  ansible.builtin.shell:
+    cmd: "vault audit enable file file_path={{ vault_log_dir }}/audit.log"
+  environment: "{{ vault_env }}"

@@ -1,0 +1,5 @@
+---
+# Unsealer values that other roles need to reach from hostvars.
+# Role defaults are not visible across roles, so we hoist them here.
+
+unsealer_transit_token_file: /root/vault-autounseal-token.txt

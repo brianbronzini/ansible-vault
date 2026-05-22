@@ -1,0 +1,18 @@
+---
+# Hostname the node uses on the tailnet. Maps to a MagicDNS name like
+# <hostname>.<tailnet>.ts.net once tailscaled is logged in.
+tailscale_hostname: "{{ inventory_hostname }}"
+
+# Tag to advertise. Must be allowed for the OAuth client used below.
+tailscale_advertise_tag: "tag:lxc"
+
+# Where the OAuth client credentials live on the controller side. The role
+# reads this file with delegate_to: localhost (or whichever host you set
+# tailscale_oauth_host to) and uses the secret to mint a one-shot auth key.
+tailscale_oauth_host: homeserver
+tailscale_oauth_env_file: /root/.config/tailscale/oauth.env
+
+# Backend that tailscale serve will front. Defaults to the LAN listener Vault
+# is already bound to, so LAN access keeps working alongside the HTTPS layer.
+tailscale_serve_backend: "http://{{ ansible_host }}:8200"
+tailscale_serve_port: 443

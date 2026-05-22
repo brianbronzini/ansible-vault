@@ -1,0 +1,19 @@
+---
+primary_api_addr: "http://{{ ansible_host }}:8200"
+primary_cluster_addr: "http://{{ ansible_host }}:8201"
+
+primary_init_secrets_file: /root/vault-primary-init.json
+primary_transit_token_file: "{{ vault_config_dir }}/.transit-token"
+
+primary_kv_mount: kv
+
+# Transit seal coordinates. Pulls the unsealer's IP straight from inventory so
+# you only have to set it in one place.
+primary_seal_unsealer_addr: "http://{{ hostvars['vault-unsealer'].ansible_host }}:8200"
+primary_seal_key_name: autounseal
+primary_seal_mount: transit
+
+# Demo-grade recovery configuration. Production would use PGP-encrypted shares
+# split across multiple operators.
+primary_recovery_shares: 1
+primary_recovery_threshold: 1

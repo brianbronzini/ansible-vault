@@ -1,0 +1,17 @@
+---
+unsealer_api_addr: "http://{{ ansible_host }}:8200"
+unsealer_cluster_addr: "http://{{ ansible_host }}:8201"
+
+unsealer_init_secrets_file: /root/vault-unsealer-init.json
+unsealer_transit_token_file: /root/vault-autounseal-token.txt
+
+unsealer_transit_key_name: autounseal
+unsealer_transit_mount: transit
+unsealer_autounseal_policy: autounseal
+
+# Demo-grade values. Production would use five keys with a threshold of three,
+# PGP-encrypted to multiple operators, and no key sitting on the same host as
+# Vault. One-of-one is acceptable here because the unsealer LXC sits on a host
+# the operator already trusts.
+unsealer_key_shares: 1
+unsealer_key_threshold: 1

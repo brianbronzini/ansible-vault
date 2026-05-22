@@ -1,0 +1,18 @@
+---
+wazuh_manager_address: 192.168.12.201
+wazuh_manager_port: 1514
+wazuh_authd_address: 192.168.12.201
+wazuh_authd_port: 1515
+
+# Apt repo
+wazuh_apt_key_url: "https://packages.wazuh.com/key/GPG-KEY-WAZUH"
+wazuh_apt_keyring: /usr/share/keyrings/wazuh-archive-keyring.gpg
+wazuh_apt_repo_url: "https://packages.wazuh.com/4.x/apt"
+wazuh_package: wazuh-agent
+
+# Audit log to monitor (Vault audit JSON).
+wazuh_vault_audit_log: "{{ vault_log_dir }}/audit.log"
+
+# Where the enrollment password lives on the controller running ansible-playbook.
+# Kept outside the repo in a gitignored .local directory next to the playbooks.
+wazuh_authd_pass_local: "{{ playbook_dir }}/../.local/wazuh_authd_pass"

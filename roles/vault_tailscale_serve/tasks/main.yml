@@ -1,0 +1,142 @@
+---
+# Install Tailscale on a Vault node and front its API with a Let's Encrypt
+# cert via `tailscale serve`. The LAN listener on 8200 keeps working so the
+# Ansible controller can still hit Vault on the local network. The HTTPS URL
+# at https://<hostname>.<tailnet>.ts.net/ is reachable from any user-tagged
+# device on the tailnet (phones, laptops, homeserver).
+
+- name: Install Tailscale apt prerequisites
+  ansible.builtin.apt:
+    name:
+      - curl
+      - gnupg
+      - ca-certificates
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Add Tailscale apt signing key
+  ansible.builtin.get_url:
+    url: "https://pkgs.tailscale.com/stable/debian/{{ ansible_distribution_release }}.noarmor.gpg"
+    dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+    mode: "0644"
+    force: false
+
+- name: Add Tailscale apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian {{ ansible_distribution_release }} main"
+    filename: tailscale
+    state: present
+    update_cache: true
+
+- name: Install Tailscale
+  ansible.builtin.apt:
+    name: tailscale
+    state: present
+
+# LXCs do not have /dev/net/tun, so the default tailscaled command line fails.
+# Userspace networking sidesteps the kernel TUN device.
+- name: Ensure tailscaled systemd override directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/tailscaled.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Drop systemd override for userspace networking
+  ansible.builtin.copy:
+    src: tailscaled-userspace.conf
+    dest: /etc/systemd/system/tailscaled.service.d/override.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart tailscaled
+
+- name: Ensure tailscaled is enabled and running
+  ansible.builtin.systemd:
+    name: tailscaled
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Apply pending tailscaled restart before reading status
+  ansible.builtin.meta: flush_handlers
+
+- name: Read current Tailscale status
+  ansible.builtin.command: tailscale status --json
+  changed_when: false
+  failed_when: false
+  register: tailscale_status_raw
+
+- name: Parse Tailscale status JSON
+  ansible.builtin.set_fact:
+    tailscale_status: "{{ tailscale_status_raw.stdout | from_json }}"
+
+# Mint a one-shot, preauthorized, tagged auth key using the OAuth client
+# secret stored on the controller side. Skipped if this node is already
+# logged in to the tailnet.
+- name: Read OAuth client secret from controller
+  ansible.builtin.shell:
+    cmd: ". {{ tailscale_oauth_env_file }} && echo $TS_OAUTH_CLIENT_SECRET"
+  delegate_to: "{{ tailscale_oauth_host }}"
+  changed_when: false
+  register: tailscale_oauth_secret_raw
+  no_log: true
+  when: tailscale_status.BackendState != "Running"
+
+- name: Build a one-shot auth key from the OAuth secret
+  ansible.builtin.set_fact:
+    tailscale_auth_key: "{{ tailscale_oauth_secret_raw.stdout | trim }}?preauthorized=true&ephemeral=false"
+  no_log: true
+  when: tailscale_status.BackendState != "Running"
+
+- name: Bring this node onto the tailnet
+  ansible.builtin.command:
+    cmd: >-
+      tailscale up
+      --auth-key={{ tailscale_auth_key }}
+      --hostname={{ tailscale_hostname }}
+      --advertise-tags={{ tailscale_advertise_tag }}
+      --accept-dns=false
+  no_log: true
+  when: tailscale_status.BackendState != "Running"
+
+- name: Re-read Tailscale status after bring-up
+  ansible.builtin.command: tailscale status --json
+  changed_when: false
+  register: tailscale_status_raw
+
+- name: Re-parse Tailscale status JSON
+  ansible.builtin.set_fact:
+    tailscale_status: "{{ tailscale_status_raw.stdout | from_json }}"
+
+- name: Read current tailscale serve config
+  ansible.builtin.command: tailscale serve status --json
+  changed_when: false
+  failed_when: false
+  register: tailscale_serve_raw
+
+- name: Parse serve config or default to empty
+  ansible.builtin.set_fact:
+    tailscale_serve: "{{ (tailscale_serve_raw.stdout | from_json) if tailscale_serve_raw.rc == 0 and tailscale_serve_raw.stdout | length > 0 else {} }}"
+
+# tailscale serve persists its config to /var/lib/tailscale, so this only
+# runs the first time. Subsequent playbook runs see the mapping already
+# present and skip.
+- name: Configure tailscale serve to front the Vault API
+  ansible.builtin.command:
+    cmd: "tailscale serve --bg --https={{ tailscale_serve_port }} {{ tailscale_serve_backend }}"
+  when: tailscale_serve.get('Web', {}) | length == 0
+
+- name: Open serve port to other tailnet devices
+  community.general.ufw:
+    rule: allow
+    port: "{{ tailscale_serve_port }}"
+    proto: tcp
+    from_ip: "{{ tailscale_cgnat_cidr }}"
+    comment: "tailscale serve from tailnet"
+
+- name: Show the resulting HTTPS URL
+  ansible.builtin.debug:
+    msg: "Vault UI now reachable at https://{{ tailscale_status.Self.DNSName | regex_replace('\\.$', '') }}/"

@@ -1,0 +1,62 @@
+---
+- name: Install apt prerequisites
+  ansible.builtin.apt:
+    name:
+      - curl
+      - gnupg
+      - ca-certificates
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install Wazuh apt signing key
+  ansible.builtin.get_url:
+    url: "{{ wazuh_apt_key_url }}"
+    dest: "{{ wazuh_apt_keyring }}"
+    mode: "0644"
+    force: false
+
+- name: Add Wazuh apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by={{ wazuh_apt_keyring }}] {{ wazuh_apt_repo_url }} stable main"
+    filename: wazuh
+    state: present
+    update_cache: true
+
+- name: Install Wazuh agent
+  ansible.builtin.apt:
+    name: "{{ wazuh_package }}"
+    state: present
+
+- name: Read enrollment password from controller
+  ansible.builtin.set_fact:
+    wazuh_authd_password: "{{ lookup('file', wazuh_authd_pass_local) | trim }}"
+  no_log: true
+  delegate_to: localhost
+  run_once: false
+
+- name: Install enrollment password on agent
+  ansible.builtin.copy:
+    content: "{{ wazuh_authd_password }}\n"
+    dest: /var/ossec/etc/authd.pass
+    owner: root
+    group: wazuh
+    mode: "0640"
+  no_log: true
+  notify: Restart wazuh-agent
+
+- name: Render ossec.conf
+  ansible.builtin.template:
+    src: ossec.conf.j2
+    dest: /var/ossec/etc/ossec.conf
+    owner: root
+    group: wazuh
+    mode: "0660"
+  notify: Restart wazuh-agent
+
+- name: Ensure wazuh-agent service is enabled
+  ansible.builtin.systemd:
+    name: wazuh-agent
+    enabled: true
+    state: started
+    daemon_reload: true

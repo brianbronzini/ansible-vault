@@ -1,0 +1,130 @@
+---
+- name: Fetch the autounseal token from the unsealer
+  ansible.builtin.slurp:
+    src: "{{ hostvars['vault-unsealer'].unsealer_transit_token_file }}"
+  delegate_to: vault-unsealer
+  register: primary_transit_token_b64
+  no_log: true
+
+- name: Decode the autounseal token
+  ansible.builtin.set_fact:
+    primary_transit_token: "{{ primary_transit_token_b64.content | b64decode | trim }}"
+  no_log: true
+
+- name: Render primary vault.hcl
+  ansible.builtin.template:
+    src: vault.hcl.j2
+    dest: "{{ vault_config_dir }}/vault.hcl"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: "0640"
+  no_log: true
+  notify: Restart vault
+
+- name: Ensure vault service is enabled and started
+  ansible.builtin.systemd:
+    name: vault
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Flush handlers so config changes take effect before bootstrap
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Vault API to listen on 8200
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host }}"
+    port: 8200
+    delay: 1
+    timeout: 30
+
+- name: Read current Vault status JSON
+  ansible.builtin.shell:
+    cmd: "vault status -format=json -address={{ primary_api_addr }} || true"
+  changed_when: false
+  register: primary_status_raw
+
+- name: Parse Vault status JSON
+  ansible.builtin.set_fact:
+    primary_status: "{{ primary_status_raw.stdout | from_json }}"
+
+- name: Initialize primary Vault if needed
+  when: not primary_status.initialized
+  block:
+    - name: Run vault operator init with recovery keys
+      ansible.builtin.shell:
+        cmd: >-
+          vault operator init -format=json
+          -recovery-shares={{ primary_recovery_shares }}
+          -recovery-threshold={{ primary_recovery_threshold }}
+          -address={{ primary_api_addr }}
+      register: primary_init_raw
+      no_log: true
+
+    - name: Persist primary init output (root-only)
+      ansible.builtin.copy:
+        content: "{{ primary_init_raw.stdout }}"
+        dest: "{{ primary_init_secrets_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Refresh status after init
+      ansible.builtin.shell:
+        cmd: "vault status -format=json -address={{ primary_api_addr }} || true"
+      changed_when: false
+      register: primary_status_raw
+
+    - name: Reparse status JSON
+      ansible.builtin.set_fact:
+        primary_status: "{{ primary_status_raw.stdout | from_json }}"
+
+- name: Fail if primary is still sealed after init
+  ansible.builtin.fail:
+    msg: "Primary Vault is still sealed. Check the Transit seal config and unsealer connectivity."
+  when: primary_status.sealed
+
+- name: Load saved init secrets
+  ansible.builtin.slurp:
+    src: "{{ primary_init_secrets_file }}"
+  register: primary_init_b64
+  no_log: true
+
+- name: Decode init secrets
+  ansible.builtin.set_fact:
+    primary_init: "{{ primary_init_b64.content | b64decode | from_json }}"
+  no_log: true
+
+- name: Set Vault env for bootstrap operations
+  ansible.builtin.set_fact:
+    vault_env:
+      VAULT_ADDR: "{{ primary_api_addr }}"
+      VAULT_TOKEN: "{{ primary_init.root_token }}"
+  no_log: true
+
+- name: List enabled secrets engines
+  ansible.builtin.shell:
+    cmd: "vault secrets list -format=json"
+  environment: "{{ vault_env }}"
+  changed_when: false
+  register: primary_secrets_raw
+
+- name: Enable KV v2 secrets engine if needed
+  when: (primary_kv_mount + '/') not in (primary_secrets_raw.stdout | from_json | dict2items | map(attribute='key') | list)
+  ansible.builtin.shell:
+    cmd: "vault secrets enable -path={{ primary_kv_mount }} -version=2 kv"
+  environment: "{{ vault_env }}"
+
+- name: List enabled audit devices
+  ansible.builtin.shell:
+    cmd: "vault audit list -format=json"
+  environment: "{{ vault_env }}"
+  changed_when: false
+  register: primary_audits_raw
+
+- name: Enable file audit device if not already enabled
+  when: "'file/' not in (primary_audits_raw.stdout | from_json | dict2items | map(attribute='key') | list)"
+  ansible.builtin.shell:
+    cmd: "vault audit enable file file_path={{ vault_log_dir }}/audit.log"
+  environment: "{{ vault_env }}"

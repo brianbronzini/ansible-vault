@@ -1,0 +1,101 @@
+---
+# Install HashiCorp Vault from the official apt repo and prepare directories.
+# Service is NOT started here. The role-specific roles (vault_unsealer,
+# vault_primary) drop their own vault.hcl and start the service.
+
+- name: Ensure apt prerequisites are present
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - jq
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install HashiCorp apt signing key
+  ansible.builtin.get_url:
+    url: "{{ vault_apt_key_url }}"
+    dest: "{{ vault_apt_keyring }}"
+    mode: "0644"
+    force: false
+
+- name: Add HashiCorp apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by={{ vault_apt_keyring }}]
+      {{ vault_apt_repo_url }}
+      {{ ansible_distribution_release }} main
+    filename: hashicorp
+    state: present
+    update_cache: true
+
+- name: Install Vault package
+  ansible.builtin.apt:
+    name: "{{ vault_package }}"
+    state: present
+
+- name: Ensure vault group exists
+  ansible.builtin.group:
+    name: "{{ vault_group }}"
+    state: present
+    system: true
+
+- name: Ensure vault user exists
+  ansible.builtin.user:
+    name: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    system: true
+    create_home: false
+    home: /etc/vault.d
+    shell: /bin/false
+    state: present
+
+- name: Ensure Vault config dir exists with safe perms
+  ansible.builtin.file:
+    path: "{{ vault_config_dir }}"
+    state: directory
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: "0750"
+
+- name: Ensure Vault data dir exists
+  ansible.builtin.file:
+    path: "{{ vault_data_dir }}"
+    state: directory
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: "0750"
+
+- name: Ensure Vault log dir exists
+  ansible.builtin.file:
+    path: "{{ vault_log_dir }}"
+    state: directory
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: "0750"
+
+- name: Open Vault API port from LAN
+  community.general.ufw:
+    rule: allow
+    port: "8200"
+    proto: tcp
+    from_ip: "{{ lan_cidr }}"
+    comment: "Vault API from LAN"
+
+- name: Open Vault API port from Tailscale CGNAT
+  community.general.ufw:
+    rule: allow
+    port: "8200"
+    proto: tcp
+    from_ip: "{{ tailscale_cgnat_cidr }}"
+    comment: "Vault API from Tailscale"
+
+- name: Open Vault Raft cluster port from LAN
+  community.general.ufw:
+    rule: allow
+    port: "8201"
+    proto: tcp
+    from_ip: "{{ lan_cidr }}"
+    comment: "Vault Raft cluster from LAN"

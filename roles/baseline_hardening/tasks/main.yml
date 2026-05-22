@@ -1,0 +1,120 @@
+---
+# Baseline hardening for every Vault LXC.
+# Reusable for any future LXC: admin user, key-only SSH, UFW, unattended security
+# updates, node_exporter. Wazuh agent enrollment is intentionally a separate role.
+
+- name: Install baseline packages
+  ansible.builtin.apt:
+    name: "{{ baseline_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Generate target locale
+  community.general.locale_gen:
+    name: "{{ baseline_locale }}"
+    state: present
+
+- name: Set system locale
+  ansible.builtin.copy:
+    dest: /etc/default/locale
+    content: "LANG={{ baseline_locale }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Configure unattended-upgrades (security only, no auto reboot)
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      Unattended-Upgrade::Origins-Pattern {
+          "origin=Debian,codename=${distro_codename},label=Debian-Security";
+      };
+      Unattended-Upgrade::Automatic-Reboot "false";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+- name: Enable unattended-upgrades periodic job
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+- name: Ensure unattended-upgrades service is enabled
+  ansible.builtin.systemd:
+    name: unattended-upgrades
+    enabled: true
+    state: started
+
+- name: Create admin user
+  ansible.builtin.user:
+    name: "{{ ansible_admin_user }}"
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+- name: Grant admin user passwordless sudo
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/{{ ansible_admin_user }}"
+    owner: root
+    group: root
+    mode: "0440"
+    content: "{{ ansible_admin_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    validate: /usr/sbin/visudo -cf %s
+
+- name: Install admin user authorized key
+  ansible.posix.authorized_key:
+    user: "{{ ansible_admin_user }}"
+    key: "{{ ansible_admin_authorized_key }}"
+    state: present
+    exclusive: true
+
+- name: Harden sshd_config
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+    validate: /usr/sbin/sshd -t -f %s
+  loop:
+    - { regexp: "^#?PermitRootLogin", line: "PermitRootLogin no" }
+    - { regexp: "^#?PasswordAuthentication", line: "PasswordAuthentication no" }
+    - { regexp: "^#?ChallengeResponseAuthentication", line: "ChallengeResponseAuthentication no" }
+    - { regexp: "^#?KbdInteractiveAuthentication", line: "KbdInteractiveAuthentication no" }
+    - { regexp: "^#?PermitEmptyPasswords", line: "PermitEmptyPasswords no" }
+  notify: Restart sshd
+
+- name: Apply UFW allow rules
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port | string }}"
+    proto: "{{ item.proto }}"
+    from_ip: "{{ item.from }}"
+    comment: "{{ item.comment }}"
+  loop: "{{ baseline_allowed_ports }}"
+
+- name: Set UFW default deny incoming
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+
+- name: Set UFW default allow outgoing
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+
+- name: Enable UFW
+  community.general.ufw:
+    state: enabled
+
+- name: Ensure node_exporter is enabled and running
+  ansible.builtin.systemd:
+    name: prometheus-node-exporter
+    enabled: true
+    state: started

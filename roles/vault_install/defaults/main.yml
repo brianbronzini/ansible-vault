@@ -1,0 +1,16 @@
+---
+# Override-able knobs for the install role.
+# Configs (vault.hcl) live in vault_unsealer / vault_primary roles, not here.
+
+vault_apt_key_url: "https://apt.releases.hashicorp.com/gpg"
+vault_apt_keyring: /usr/share/keyrings/hashicorp-archive-keyring.gpg
+vault_apt_repo_url: "https://apt.releases.hashicorp.com"
+
+vault_package: vault
+
+vault_user: vault
+vault_group: vault
+
+vault_config_dir: /etc/vault.d
+vault_data_dir: /opt/vault/data
+vault_log_dir: /var/log/vault

@@ -4,9 +4,11 @@ Two-node HashiCorp Vault setup, fully automated with Ansible. Primary Vault hold
 
 Vault audit logs ship to a Wazuh SIEM, so every secret access is visible to the SOC stack.
 
-## Why it exists
+## A note from me
 
-The environment had accumulated secrets in plain `.env` and `config.ini` files scattered across multiple hosts. That is not where production secrets belong. The pattern here mirrors something a small DevOps team would use as a starting point before going to a three-node HA cluster with cloud KMS unseal.
+I built this for two reasons. First, my own infrastructure had accumulated secrets in plain `.env` and `config.ini` files scattered across half a dozen hosts. I wanted them in one place, with an audit trail, and managed the same way as everything else I run. Second, I wanted a hands-on project that exercised the patterns I read about for production secrets management: auto-unseal, least-privilege auth, audit forwarding to a SIEM, transport security via a real cert.
+
+The pattern here mirrors what a small DevOps team would use as a starting point before going to a three-node HA cluster with cloud KMS unseal. If any of this is useful to you, fork it and change what you need to. The roles are intentionally small and standalone, so it should be straightforward to lift `vault_install`, `vault_unsealer`, or `vault_primary` into a different deployment without taking the rest. The Wazuh agent role assumes you already have a manager somewhere; if you don't, drop that role from `site.yml` and the rest still converges. Questions, suggestions, and pull requests are welcome! :)
 
 ## Repo layout
 

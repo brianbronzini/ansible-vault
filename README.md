@@ -10,7 +10,7 @@ I built this for two reasons. First, my own infrastructure had accumulated secre
 
 The pattern here mirrors what a small DevOps team would use as a starting point before going to a three-node HA cluster with cloud KMS unseal. If any of this is useful to you, fork it and change what you need to. The roles are intentionally small and standalone, so it should be straightforward to lift `vault_install`, `vault_unsealer`, or `vault_primary` into a different deployment without taking the rest. The Wazuh agent role assumes you already have a manager somewhere; if you don't, drop that role from `site.yml` and the rest still converges. Questions, suggestions, and pull requests are welcome! :)
 
-## Repo layout
+## Project Structure
 
 ```
 inventory/             Ansible inventory (hosts, groups)
@@ -23,11 +23,11 @@ files/                 static assets copied to hosts
 
 Each role has a short comment at the top of `tasks/main.yml` describing what it does.
 
-## Status
+## Results
 
-Live and running. The full deployment converges end to end on `ansible-playbook playbooks/site.yml` with zero changes on re-run.
+The full deployment converges end to end on `ansible-playbook playbooks/site.yml` with zero changes on re-run.
 
-What the playbook gets you when it finishes:
+The playbook outcome provides:
 
 - Two Vault nodes, primary auto-unsealed by the unsealer via the Transit engine.
 - KV v2 mounted at `kv/`, an `ansible-controller` AppRole bound to a specific controller IP with least-privilege policy.
